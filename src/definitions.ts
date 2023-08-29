@@ -28,6 +28,7 @@ export interface CapacitorHealthkitPlugin {
    * Checks if there is writing permission for multiple sample types. This function has not been tested - and usually needs a parameter to be able to answer.
    */
   multipleIsEditionAuthorized(): Promise<void>;
+  querySampleTypeAggregated(): Promise<void>;
 }
 
 /**
