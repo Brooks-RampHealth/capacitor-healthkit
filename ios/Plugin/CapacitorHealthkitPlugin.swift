@@ -621,4 +621,118 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
         }
         healthStore.execute(query)
     }
+    
+    func querySampleTypeAggregated(command: CDVInvokedUrlCommand) {
+        guard let args = command.arguments[0] as? [String: Any] else {
+            return
+        }
+
+        let startDate = Date(timeIntervalSince1970: args["HKPluginKeyStartDate"] as? TimeInterval ?? 0)
+        let endDate = Date(timeIntervalSince1970: args["HKPluginKeyEndDate"] as? TimeInterval ?? 0)
+
+        guard let sampleTypeString = args["HKPluginKeySampleType"] as? String,
+              let unitString = args["HKPluginKeyUnit"] as? String else {
+            return
+        }
+
+        let calendar = Calendar.current
+        var interval = DateComponents()
+
+        let aggregation = args["HKPluginKeyAggregation"] as? String ?? "day"
+        switch aggregation {
+        case "hour":
+            interval.hour = 1
+        case "week":
+            interval.day = 7
+        case "month":
+            interval.month = 1
+        case "year":
+            interval.year = 1
+        default:
+            interval.day = 1
+        }
+
+        var anchorComponents = calendar.dateComponents([.day, .month, .year], from: endDate)
+        anchorComponents.hour = 0
+
+        guard let anchorDate = calendar.date(from: anchorComponents),
+              let quantityType = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: sampleTypeString)) else {
+            return
+        }
+
+        var statOpt: HKStatisticsOptions
+
+        if quantityType == nil {
+            // Handle error: sampleType was invalid
+            return
+        } else if sampleTypeString == "HKQuantityTypeIdentifierHeartRate" {
+            statOpt = .discreteAverage
+        } else {
+            statOpt = .cumulativeSum
+        }
+
+        let unit: HKUnit
+        if unitString == "percent" {
+            unit = HKUnit(from: "%")
+        } else {
+            unit = HKUnit(from: unitString)
+        }
+
+        guard let type = HKSampleType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: sampleTypeString)) else {
+            // Handle error: sampleType was invalid
+            return
+        }
+
+        let predicate: NSPredicate? = nil
+        let requestTypes: Set<HKSampleType> = [type]
+
+        HKHealthStore().requestAuthorization(toShare: nil, read: requestTypes) { success, error in
+            if success {
+                let query = HKStatisticsCollectionQuery(quantityType: quantityType,
+                                                        quantitySamplePredicate: predicate,
+                                                        options: statOpt,
+                                                        anchorDate: anchorDate,
+                                                        intervalComponents: interval)
+
+                query.initialResultsHandler = { query, results, error in
+                    if let error = error {
+                        // Handle error
+                    } else {
+                        var finalResults: [[String: Any]] = []
+
+                        results?.enumerateStatistics(from: startDate, to: endDate) { statistics, _ in
+                            var entry: [String: Any] = [:]
+                            entry["HKPluginKeyStartDate"] = String(describing: statistics.startDate)
+                            entry["HKPluginKeyEndDate"] = String(describing: statistics.endDate)
+
+                            let quantity: HKQuantity?
+                            switch statOpt {
+                            case .discreteAverage:
+                                quantity = statistics.averageQuantity()
+                            case .cumulativeSum:
+                                quantity = statistics.sumQuantity()
+                            case .discreteMin:
+                                quantity = statistics.minimumQuantity()
+                            case .discreteMax:
+                                quantity = statistics.maximumQuantity()
+                            default:
+                                quantity = nil
+                            }
+
+                            if let quantity = quantity {
+                                let value = quantity.doubleValue(for: unit)
+                                entry["quantity"] = value
+                            }
+                            finalResults.append(entry)
+                        }
+                        // Handle `finalResults` here, such as sending it to a callback
+                    }
+                }
+                HKHealthStore().execute(query)
+            } else {
+                // Handle error
+            }
+        }
+    }
+
 }
